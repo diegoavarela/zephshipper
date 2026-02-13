@@ -1,0 +1,25 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+build/
+dist/
+*.xcarchive
+
+# Temporary files
+*.tmp
+*.log
+.DS_Store
+
+# Environment/secrets
+.env
+.env.local
+*.p8
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Test output
+screenshots/

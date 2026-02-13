@@ -1,0 +1,55 @@
+{
+  "name": "zephshipper",
+  "version": "0.1.0",
+  "description": "iOS/macOS app validation and shipping automation for OpenClaw",
+  "keywords": [
+    "openclaw",
+    "skill",
+    "ios",
+    "macos",
+    "xcode",
+    "app-store",
+    "testflight",
+    "automation",
+    "ci-cd"
+  ],
+  "author": "Diego Varela",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/diegoavarela/zephshipper"
+  },
+  "homepage": "https://github.com/diegoavarela/zephshipper#readme",
+  "bugs": {
+    "url": "https://github.com/diegoavarela/zephshipper/issues"
+  },
+  "openclaw": {
+    "type": "skill",
+    "emoji": "🚀",
+    "requires": {
+      "bins": ["xcodebuild", "swiftlint", "greenlight"],
+      "os": ["darwin"]
+    },
+    "install": [
+      {
+        "id": "swiftlint",
+        "kind": "brew",
+        "formula": "swiftlint",
+        "bins": ["swiftlint"],
+        "label": "Install SwiftLint"
+      },
+      {
+        "id": "greenlight",
+        "kind": "brew",
+        "formula": "revylai/tap/greenlight",
+        "bins": ["greenlight"],
+        "label": "Install Greenlight"
+      }
+    ]
+  },
+  "files": [
+    "SKILL.md",
+    "README.md",
+    "scripts/"
+  ]
+}
