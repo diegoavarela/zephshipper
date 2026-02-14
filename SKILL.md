@@ -30,17 +30,42 @@ Increments CURRENT_PROJECT_VERSION in Xcode project. Use before uploading new bu
 ### asc-metadata
 
 ```bash
+# Metadata
 python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py apps
 python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py get <app_id>
 python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py set <app_id> metadata.json
 python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py subtitle <app_id> "text"
 python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py categories <app_id> PRIMARY [SECONDARY]
+
+# Pricing & Subscriptions
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py price <app_id> free
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py subs <app_id>
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py review-screenshot <sub_id> /path/to/paywall.png
+
+# Review & Submission
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py review-notes <app_id> "notes" ['{"firstName":"...","lastName":"...","email":"...","phone":"..."}']
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py status <app_id>     # Full readiness check
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py submit <app_id>     # Submit for review
 ```
 
-Manage App Store Connect metadata via API. Upload descriptions, keywords, subtitles, categories.
-Metadata JSON supports: description, keywords, promotionalText, whatsNew, subtitle, primaryCategory, secondaryCategory.
+Manage App Store Connect metadata, pricing, subscriptions, and submission via API.
 
-**Requires:** `~/.appstoreconnect/private_keys/AuthKey_*.p8` + PyJWT (`pip3 install pyjwt[crypto]`)
+**Commands:**
+- `apps` — List all apps
+- `get` — Get current metadata for an app
+- `set` — Upload metadata from JSON file (with guardrails)
+- `subtitle` — Set subtitle
+- `categories` — Set primary/secondary categories
+- `price free` — Set app price to Free
+- `subs` — List subscriptions with status and review screenshot check
+- `review-notes` — Set review notes + contact info (creates or updates)
+- `review-screenshot` — Upload paywall screenshot for subscription review
+- `status` — Full submission readiness check (version, build, screenshots, pricing, subs, review notes)
+- `submit` — Submit for App Store review (creates reviewSubmission + confirms)
+
+**Requires:** `~/.appstoreconnect/private_keys/AuthKey_*.p8` + PyJWT (`pip3 install pyjwt[crypto]`) + requests
+
+**Note:** App Privacy (Data Usage) cannot be set via API — must use ASC web UI.
 
 ### sim-control
 

@@ -32,8 +32,19 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo "📱 Level 1: Build Check"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
+# Detect platform (macOS vs iOS)
+if grep -q "SUPPORTED_PLATFORMS.*macosx" "$XCODEPROJ/project.pbxproj" 2>/dev/null && \
+   ! grep -q "SUPPORTED_PLATFORMS.*iphone" "$XCODEPROJ/project.pbxproj" 2>/dev/null; then
+    BUILD_DEST="generic/platform=macOS"
+elif grep -q "SDKROOT.*macosx" "$XCODEPROJ/project.pbxproj" 2>/dev/null && \
+     ! grep -q "SDKROOT.*iphoneos" "$XCODEPROJ/project.pbxproj" 2>/dev/null; then
+    BUILD_DEST="generic/platform=macOS"
+else
+    BUILD_DEST="generic/platform=iOS Simulator"
+fi
+
 BUILD_OUTPUT=$(xcodebuild -project "$XCODEPROJ" -scheme "$SCHEME" \
-    -destination "generic/platform=iOS Simulator" \
+    -destination "$BUILD_DEST" \
     -configuration Debug build 2>&1) || true
 
 if echo "$BUILD_OUTPUT" | grep -q "BUILD SUCCEEDED"; then

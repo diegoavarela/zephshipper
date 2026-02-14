@@ -4,12 +4,18 @@ ZephShipper - App Store Connect Metadata Manager
 Upload and manage app metadata via ASC API.
 
 Usage:
-  python3 asc-metadata.py apps                          # List all apps
-  python3 asc-metadata.py versions <app_id>              # List versions
-  python3 asc-metadata.py get <app_id>                   # Get current metadata
-  python3 asc-metadata.py set <app_id> <metadata.json>   # Upload metadata from JSON
-  python3 asc-metadata.py subtitle <app_id> <text>       # Set subtitle
+  python3 asc-metadata.py apps                              # List all apps
+  python3 asc-metadata.py versions <app_id>                  # List versions
+  python3 asc-metadata.py get <app_id>                       # Get current metadata
+  python3 asc-metadata.py set <app_id> <metadata.json>       # Upload metadata from JSON
+  python3 asc-metadata.py subtitle <app_id> <text>           # Set subtitle
   python3 asc-metadata.py categories <app_id> <primary> [secondary]
+  python3 asc-metadata.py price <app_id> free                # Set app price to Free
+  python3 asc-metadata.py review-notes <app_id> <text>       # Set review notes + contact info
+  python3 asc-metadata.py review-screenshot <sub_id> <file>  # Upload subscription review screenshot
+  python3 asc-metadata.py subs <app_id>                      # List subscriptions + status
+  python3 asc-metadata.py submit <app_id>                    # Submit for App Store review
+  python3 asc-metadata.py status <app_id>                    # Full submission readiness check
 
 Metadata JSON format:
 {
@@ -24,7 +30,7 @@ Metadata JSON format:
 }
 """
 
-import jwt, time, json, urllib.request, sys, os, re
+import jwt, time, json, urllib.request, sys, os, re, requests as _requests
 
 # Config - reads from env or defaults
 KEY_ID = os.environ.get("ASC_KEY_ID", "AA5UCQU456")
@@ -336,6 +342,277 @@ def enforce_guardrails(meta: dict, force: bool = False) -> bool:
     return True
 
 
+def _rapi(method, path, payload=None):
+    """requests-based API call (for uploads etc)."""
+    headers = {"Authorization": f"Bearer {get_token()}", "Content-Type": "application/json"}
+    url = f"{BASE}{path}"
+    r = _requests.request(method, url, headers=headers, json=payload)
+    return r
+
+
+def cmd_price_free(app_id):
+    """Set app price to Free."""
+    # Find FREE price point for USA
+    resp = api("GET", f"/apps/{app_id}/appPricePoints?filter[territory]=USA&limit=1")
+    if not resp or not resp["data"]:
+        print("Could not find price points")
+        return
+    free_pp = resp["data"][0]["id"]  # First one is always $0.00
+
+    payload = {
+        "data": {
+            "type": "appPriceSchedules",
+            "relationships": {
+                "app": {"data": {"type": "apps", "id": app_id}},
+                "baseTerritory": {"data": {"type": "territories", "id": "USA"}},
+                "manualPrices": {"data": [{"type": "appPrices", "id": "${price1}"}]}
+            }
+        },
+        "included": [{
+            "type": "appPrices", "id": "${price1}",
+            "attributes": {"startDate": None},
+            "relationships": {"appPricePoint": {"data": {"type": "appPricePoints", "id": free_pp}}}
+        }]
+    }
+    r = _rapi("POST", "/appPriceSchedules", payload)
+    if r.status_code in (200, 201):
+        print("✅ Price set to FREE")
+    else:
+        for err in r.json().get("errors", []):
+            print(f"ERROR: {err.get('detail', '')}")
+
+
+def cmd_review_notes(app_id, notes, contact=None):
+    """Set review notes and contact info. contact = dict with firstName, lastName, email, phone."""
+    # Get version ID (PREPARE_FOR_SUBMISSION)
+    versions = api("GET", f"/apps/{app_id}/appStoreVersions?limit=1&fields[appStoreVersions]=versionString,appStoreState")
+    if not versions or not versions["data"]:
+        print("No versions found")
+        return
+    ver_id = versions["data"][0]["id"]
+
+    # Check if review detail exists
+    r = _rapi("GET", f"/appStoreVersions/{ver_id}/appStoreReviewDetail")
+    existing = r.json().get("data")
+
+    attrs = {"notes": notes, "demoAccountRequired": False}
+    if contact:
+        attrs.update({
+            "contactFirstName": contact.get("firstName", ""),
+            "contactLastName": contact.get("lastName", ""),
+            "contactEmail": contact.get("email", ""),
+            "contactPhone": contact.get("phone", ""),
+        })
+
+    if existing:
+        # Update
+        r2 = _rapi("PATCH", f"/appStoreReviewDetails/{existing['id']}", {
+            "data": {"type": "appStoreReviewDetails", "id": existing["id"], "attributes": attrs}
+        })
+    else:
+        # Create
+        r2 = _rapi("POST", "/appStoreReviewDetails", {
+            "data": {
+                "type": "appStoreReviewDetails", "attributes": attrs,
+                "relationships": {"appStoreVersion": {"data": {"type": "appStoreVersions", "id": ver_id}}}
+            }
+        })
+
+    if r2.status_code in (200, 201):
+        print(f"✅ Review notes set ({len(notes)} chars)")
+    else:
+        for err in r2.json().get("errors", []):
+            print(f"ERROR: {err.get('detail', '')}")
+
+
+def cmd_review_screenshot(sub_id, file_path):
+    """Upload a review screenshot for a subscription."""
+    file_path = os.path.expanduser(file_path)
+    file_size = os.path.getsize(file_path)
+    filename = os.path.basename(file_path)
+
+    # Create reservation
+    r = _rapi("POST", "/subscriptionAppStoreReviewScreenshots", {
+        "data": {
+            "type": "subscriptionAppStoreReviewScreenshots",
+            "attributes": {"fileName": filename, "fileSize": file_size},
+            "relationships": {"subscription": {"data": {"type": "subscriptions", "id": sub_id}}}
+        }
+    })
+    if r.status_code != 201:
+        for err in r.json().get("errors", []):
+            print(f"ERROR: {err.get('detail', '')}")
+        return
+
+    rdata = r.json()["data"]
+    ss_id = rdata["id"]
+
+    # Upload chunks
+    with open(file_path, "rb") as f:
+        file_data = f.read()
+    for op in rdata["attributes"]["uploadOperations"]:
+        hdrs = {h["name"]: h["value"] for h in op["requestHeaders"]}
+        chunk = file_data[op["offset"]:op["offset"]+op["length"]]
+        _requests.put(op["url"], headers=hdrs, data=chunk)
+
+    # Commit
+    r2 = _rapi("PATCH", f"/subscriptionAppStoreReviewScreenshots/{ss_id}", {
+        "data": {
+            "type": "subscriptionAppStoreReviewScreenshots", "id": ss_id,
+            "attributes": {"uploaded": True, "sourceFileChecksum": rdata["attributes"]["sourceFileChecksum"]}
+        }
+    })
+    if r2.status_code == 200:
+        print(f"✅ Review screenshot uploaded for subscription {sub_id}")
+    else:
+        for err in r2.json().get("errors", []):
+            print(f"ERROR: {err.get('detail', '')}")
+
+
+def cmd_subs(app_id):
+    """List subscription groups and subscriptions with status."""
+    resp = api("GET", f"/apps/{app_id}/subscriptionGroups")
+    if not resp or not resp["data"]:
+        print("No subscription groups")
+        return
+    for g in resp["data"]:
+        print(f"\nGroup: {g['attributes']['referenceName']} ({g['id']})")
+        subs = api("GET", f"/subscriptionGroups/{g['id']}/subscriptions")
+        if subs:
+            for s in subs["data"]:
+                a = s["attributes"]
+                print(f"  {a['name']} | {a['productId']} | {a['state']} | {a.get('subscriptionPeriod', '?')}")
+                # Check review screenshot
+                r = _rapi("GET", f"/subscriptions/{s['id']}/appStoreReviewScreenshot")
+                has_ss = r.status_code == 200 and r.json().get("data")
+                print(f"    Review screenshot: {'✅' if has_ss else '❌ Missing'}")
+
+
+def cmd_submit(app_id):
+    """Submit app for App Store review."""
+    # Create review submission
+    r = _rapi("POST", "/reviewSubmissions", {
+        "data": {
+            "type": "reviewSubmissions",
+            "relationships": {"app": {"data": {"type": "apps", "id": app_id}}}
+        }
+    })
+    if r.status_code != 201:
+        for err in r.json().get("errors", []):
+            print(f"ERROR: {err.get('detail', '')}")
+        return
+
+    sub_id = r.json()["data"]["id"]
+
+    # Get latest version
+    versions = api("GET", f"/apps/{app_id}/appStoreVersions?limit=1&fields[appStoreVersions]=versionString,appStoreState")
+    if not versions or not versions["data"]:
+        print("No versions found")
+        return
+    ver_id = versions["data"][0]["id"]
+
+    # Add version as submission item
+    r2 = _rapi("POST", "/reviewSubmissionItems", {
+        "data": {
+            "type": "reviewSubmissionItems",
+            "relationships": {
+                "reviewSubmission": {"data": {"type": "reviewSubmissions", "id": sub_id}},
+                "appStoreVersion": {"data": {"type": "appStoreVersions", "id": ver_id}}
+            }
+        }
+    })
+    if r2.status_code not in (200, 201):
+        errors = r2.json().get("errors", [])
+        for err in errors:
+            print(f"ERROR: {err.get('detail', '')}")
+            # Show associated errors if any
+            meta = err.get("meta", {})
+            for path, errs in meta.get("associatedErrors", {}).items():
+                for ae in errs:
+                    print(f"  → {ae.get('detail', '')}")
+        return
+
+    # Confirm submission
+    r3 = _rapi("PATCH", f"/reviewSubmissions/{sub_id}", {
+        "data": {
+            "type": "reviewSubmissions", "id": sub_id,
+            "attributes": {"submitted": True}
+        }
+    })
+    if r3.status_code == 200:
+        print(f"🚀 App submitted for review!")
+    else:
+        for err in r3.json().get("errors", []):
+            print(f"ERROR: {err.get('detail', '')}")
+
+
+def cmd_status(app_id):
+    """Full submission readiness check."""
+    print("=== SUBMISSION READINESS CHECK ===\n")
+
+    # Version state
+    versions = api("GET", f"/apps/{app_id}/appStoreVersions?limit=1&fields[appStoreVersions]=versionString,appStoreState")
+    if versions and versions["data"]:
+        v = versions["data"][0]
+        state = v["attributes"]["appStoreState"]
+        print(f"Version: {v['attributes']['versionString']} → {state}")
+        ver_id = v["id"]
+    else:
+        print("❌ No version found")
+        return
+
+    # Build linked?
+    build = api("GET", f"/appStoreVersions/{ver_id}/build?fields[builds]=version,processingState")
+    if build and build.get("data"):
+        b = build["data"]["attributes"]
+        print(f"Build: {b['version']} ({b['processingState']}) ✅")
+    else:
+        print("Build: ❌ No build linked")
+
+    # Screenshots
+    locs = api("GET", f"/appStoreVersions/{ver_id}/appStoreVersionLocalizations")
+    if locs:
+        for loc in locs["data"]:
+            locale = loc["attributes"]["locale"]
+            ss = api("GET", f"/appStoreVersionLocalizations/{loc['id']}/appScreenshotSets")
+            count = 0
+            if ss:
+                for s in ss["data"]:
+                    shots = api("GET", f"/appScreenshotSets/{s['id']}/appScreenshots")
+                    if shots:
+                        count += len(shots["data"])
+            print(f"Screenshots ({locale}): {count} {'✅' if count >= 1 else '❌'}")
+
+    # Review notes
+    r = _rapi("GET", f"/appStoreVersions/{ver_id}/appStoreReviewDetail")
+    rd = r.json().get("data")
+    if rd:
+        print(f"Review notes: ✅ ({len(rd['attributes'].get('notes') or '')} chars)")
+        print(f"Demo account required: {rd['attributes'].get('demoAccountRequired', '?')}")
+    else:
+        print("Review notes: ❌ Missing")
+
+    # Price
+    r2 = _rapi("GET", f"/appPriceSchedules/{app_id}/manualPrices")
+    if r2.status_code == 200 and r2.json().get("data"):
+        print("Pricing: ✅")
+    else:
+        print("Pricing: ❌ Not set")
+
+    # Subscriptions
+    resp = api("GET", f"/apps/{app_id}/subscriptionGroups")
+    if resp and resp["data"]:
+        for g in resp["data"]:
+            subs = api("GET", f"/subscriptionGroups/{g['id']}/subscriptions")
+            if subs:
+                for s in subs["data"]:
+                    a = s["attributes"]
+                    icon = "✅" if a["state"] == "READY_TO_SUBMIT" else "⚠️"
+                    print(f"Sub {a['name']}: {a['state']} {icon}")
+
+    print("\n⚠️  App Privacy (Data Usage) must be set via ASC web UI — no API available.")
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(__doc__)
@@ -354,5 +631,24 @@ if __name__ == "__main__":
         cmd_subtitle(sys.argv[2], sys.argv[3])
     elif cmd == "categories" and len(sys.argv) > 3:
         cmd_categories(sys.argv[2], sys.argv[3], sys.argv[4] if len(sys.argv) > 4 else None)
+    elif cmd == "price" and len(sys.argv) > 3 and sys.argv[3] == "free":
+        cmd_price_free(sys.argv[2])
+    elif cmd == "review-notes" and len(sys.argv) > 3:
+        contact = None
+        if len(sys.argv) > 4:
+            # Optional: pass contact as JSON string
+            try:
+                contact = json.loads(sys.argv[4])
+            except json.JSONDecodeError:
+                pass
+        cmd_review_notes(sys.argv[2], sys.argv[3], contact)
+    elif cmd == "review-screenshot" and len(sys.argv) > 3:
+        cmd_review_screenshot(sys.argv[2], sys.argv[3])
+    elif cmd == "subs" and len(sys.argv) > 2:
+        cmd_subs(sys.argv[2])
+    elif cmd == "submit" and len(sys.argv) > 2:
+        cmd_submit(sys.argv[2])
+    elif cmd == "status" and len(sys.argv) > 2:
+        cmd_status(sys.argv[2])
     else:
         print(__doc__)
