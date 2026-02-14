@@ -42,6 +42,34 @@ Metadata JSON supports: description, keywords, promotionalText, whatsNew, subtit
 
 **Requires:** `~/.appstoreconnect/private_keys/AuthKey_*.p8` + PyJWT (`pip3 install pyjwt[crypto]`)
 
+### sim-control
+
+```bash
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/sim-control.py info
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/sim-control.py statusbar
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/sim-control.py click <x%> <y%>
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/sim-control.py screenshot /path/to/output.png
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/sim-control.py launch <bundle_id>
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/sim-control.py kill <bundle_id>
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/sim-control.py uninstall <bundle_id>
+```
+
+Control iOS Simulator programmatically. Click coordinates are percentages of phone screen (0-100).
+**Requires:** Accessibility permissions for node, PyObjC Quartz.
+
+### screenshots (XCUITest - preferred)
+
+For automated App Store screenshots, create a `ScreenshotTests.swift` in the UITests target:
+1. Navigate to each tab/screen using XCUIApplication tab bar buttons
+2. Call `XCUIScreen.main.screenshot()` and save to disk
+3. Run with: `xcodebuild test -only-testing:UITests/ScreenshotTests/testCaptureAllScreenshots`
+
+**Tips:**
+- Set clean status bar first: `xcrun simctl status_bar <device> override --time "9:41" ...`
+- Uninstall app before running for fresh mock data
+- Use `sleep(3)` after launch for splash screen
+- iPhone 16 Pro Max simulator = 1320x2868 (6.9" required size)
+
 ### ship <path> [release_notes]
 
 ```bash
