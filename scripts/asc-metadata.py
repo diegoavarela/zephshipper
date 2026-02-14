@@ -24,7 +24,7 @@ Metadata JSON format:
 }
 """
 
-import jwt, time, json, urllib.request, sys, os
+import jwt, time, json, urllib.request, sys, os, re
 
 # Config - reads from env or defaults
 KEY_ID = os.environ.get("ASC_KEY_ID", "AA5UCQU456")
@@ -115,9 +115,12 @@ def cmd_get(app_id):
                 print(f"Subtitle: {a.get('subtitle') or 'EMPTY'}")
 
 
-def cmd_set(app_id, json_file):
+def cmd_set(app_id, json_file, force=False):
     with open(json_file) as f:
         meta = json.load(f)
+
+    if not enforce_guardrails(meta, force=force):
+        sys.exit(1)
 
     locale = meta.get("locale", "en-US")
 
@@ -245,6 +248,94 @@ def cmd_categories(app_id, primary, secondary=None):
         print(f"✅ Categories updated")
 
 
+# ── Guardrails ──────────────────────────────────────────────────────
+# Catch hallucinated or unverified content before it hits App Store Connect.
+
+GUARDRAIL_PATTERNS = [
+    # Emails that don't belong to verified domains
+    (r'[\w.-]+@[\w.-]+\.\w+', "email address"),
+    # URLs that aren't apple.com legal links
+    (r'https?://(?!www\.apple\.com/legal)[\w.-]+\.\w+[/\w.-]*', "URL"),
+    # Phone numbers
+    (r'\+?\d[\d\s\-()]{7,}\d', "phone number"),
+    # Social media handles
+    (r'@[A-Za-z][\w]{2,}', "social media handle"),
+]
+
+# Known-safe patterns (won't trigger warnings)
+SAFE_PATTERNS = [
+    r'https?://www\.apple\.com/legal/',  # Apple EULA
+]
+
+def validate_metadata(meta: dict) -> list:
+    """Check metadata for potentially hallucinated content. Returns list of warnings."""
+    warnings = []
+    text_fields = ["description", "promotionalText", "whatsNew", "subtitle"]
+
+    for field in text_fields:
+        text = meta.get(field, "")
+        if not text:
+            continue
+
+        for pattern, label in GUARDRAIL_PATTERNS:
+            matches = re.findall(pattern, text)
+            for match in matches:
+                # Skip known-safe matches
+                if any(re.match(sp, match) for sp in SAFE_PATTERNS):
+                    continue
+                warnings.append(f"⚠️  [{field}] contains {label}: \"{match}\"")
+
+    # Character limit checks
+    limits = {
+        "subtitle": 30,
+        "keywords": 100,
+        "promotionalText": 170,
+        "description": 4000,
+        "whatsNew": 4000,
+    }
+    for field, limit in limits.items():
+        text = meta.get(field, "")
+        if text and len(text) > limit:
+            warnings.append(f"❌ [{field}] exceeds {limit} char limit ({len(text)} chars)")
+
+    # Keywords validation
+    kw = meta.get("keywords", "")
+    if kw:
+        if " ," in kw or ", " in kw:
+            warnings.append("⚠️  [keywords] has spaces around commas (wastes chars)")
+        words = kw.split(",")
+        dupes = [w for w in words if words.count(w) > 1]
+        if dupes:
+            warnings.append(f"⚠️  [keywords] duplicates: {set(dupes)}")
+
+    return warnings
+
+
+def enforce_guardrails(meta: dict, force: bool = False) -> bool:
+    """Validate and block upload if issues found. Returns True if safe to proceed."""
+    warnings = validate_metadata(meta)
+    if not warnings:
+        return True
+
+    print("\n🛡️  GUARDRAIL CHECK:")
+    for w in warnings:
+        print(f"  {w}")
+    print()
+
+    has_blockers = any(w.startswith("❌") for w in warnings)
+    if has_blockers:
+        print("❌ Blocked: fix errors above before uploading.")
+        return False
+
+    if not force:
+        print("⚠️  Warnings found. Use --force to upload anyway.")
+        print("   Make sure all contact info, URLs, and handles are REAL and VERIFIED.")
+        return False
+
+    print("⚠️  Proceeding with warnings (--force)")
+    return True
+
+
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(__doc__)
@@ -258,7 +349,7 @@ if __name__ == "__main__":
     elif cmd == "get" and len(sys.argv) > 2:
         cmd_get(sys.argv[2])
     elif cmd == "set" and len(sys.argv) > 3:
-        cmd_set(sys.argv[2], sys.argv[3])
+        cmd_set(sys.argv[2], sys.argv[3], force="--force" in sys.argv)
     elif cmd == "subtitle" and len(sys.argv) > 3:
         cmd_subtitle(sys.argv[2], sys.argv[3])
     elif cmd == "categories" and len(sys.argv) > 3:

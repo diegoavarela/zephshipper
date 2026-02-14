@@ -218,6 +218,20 @@ PROJECT/screenshots/
 3. **Use demo data** - Populate app with good-looking sample data
 4. **Check dark mode** - May want both light and dark screenshots
 
+## Metadata Guardrails
+
+**NEVER hallucinate contact info.** The asc-metadata.py script enforces these checks automatically:
+
+1. **No unverified emails** — Don't invent support@whatever.com. If no email exists, don't include one.
+2. **No unverified URLs** — Only use URLs that actually exist and are controlled by the developer.
+3. **No fake phone numbers or social handles** — Only include verified, real contact info.
+4. **Character limits enforced** — Title 30, Subtitle 30, Keywords 100, Description 4000, Promo Text 170.
+5. **Keyword hygiene** — No spaces after commas, no duplicates, no plurals (iOS indexes both).
+
+The script will **block uploads** with errors (char limits) and **warn** on suspicious content (emails, URLs, handles). Use `--force` to override warnings only after manual verification.
+
+**Rule for the agent:** When generating metadata, ONLY include contact information that the developer has explicitly provided or that exists in the project files. When in doubt, leave it out.
+
 ## App Store Connect Credentials
 
 Store in `~/.appstoreconnect/private_keys/AuthKey_KEYID.p8`
