@@ -18,8 +18,8 @@ TEAM_ID="LFAGCRNVLW"
 TEMP_DIR="/tmp/zephshipper"
 MAX_RETRIES=3
 
-STEPS=(detect validate bump archive upload metadata submit)
-STEP_LABELS=("🔍 Detect Project" "✅ Validate" "🔢 Bump Build" "📦 Archive" "☁️  Upload" "📝 Metadata Check" "🚀 Submit")
+STEPS=(detect validate bump archive upload metadata optimize submit)
+STEP_LABELS=("🔍 Detect Project" "✅ Validate" "🔢 Bump Build" "📦 Archive" "☁️  Upload" "📝 Metadata Check" "🔑 ASO Optimize" "🚀 Submit")
 
 # ── Parse Args ──────────────────────────────────────────────────────
 PROJECT_PATH=""
@@ -27,12 +27,14 @@ RESUME_FROM=""
 VERSION=""
 WHATS_NEW=""
 DRY_RUN=false
+OPTIMIZE_ASO=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --resume-from) RESUME_FROM="$2"; shift 2 ;;
         --version) VERSION="$2"; shift 2 ;;
         --whats-new) WHATS_NEW="$2"; shift 2 ;;
+        --optimize-aso) OPTIMIZE_ASO=true; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
         -h|--help)
             echo "Usage: ship.sh <project_path> [--resume-from <step>] [--version <x.y.z>] [--whats-new \"text\"] [--dry-run]"
@@ -441,7 +443,39 @@ step_metadata() {
     return 0
 }
 
-# ── Step 7: Submit ──────────────────────────────────────────────────
+# ── Step 7: ASO Optimize ────────────────────────────────────────────
+step_optimize() {
+    log "${STEP_LABELS[6]}"
+
+    if ! $OPTIMIZE_ASO; then
+        info "Skipping ASO optimization (use --optimize-aso to enable)"
+        return 0
+    fi
+
+    if [[ -z "$APP_ID" || "$APP_ID" == "DRY_RUN_APP_ID" ]]; then
+        if $DRY_RUN; then
+            info "[DRY-RUN] Would optimize ASO metadata"; return 0
+        fi
+        fail "No ASC App ID — cannot optimize"; return 1
+    fi
+
+    if $DRY_RUN; then
+        info "[DRY-RUN] Would run: asc-metadata.py optimize $APP_ID $PROJECT_PATH --apply"
+        return 0
+    fi
+
+    local output
+    output=$(python3 "$ASC_META" optimize "$APP_ID" "$PROJECT_PATH" --apply 2>&1) || {
+        fail "ASO optimization failed"
+        echo "$output" | tail -10 | sed 's/^/  /'
+        return 1
+    }
+    echo "$output" | sed 's/^/  /'
+    ok "ASO metadata optimized and applied"
+    return 0
+}
+
+# ── Step 8: Submit ──────────────────────────────────────────────────
 step_submit() {
     log "${STEP_LABELS[6]}"
 

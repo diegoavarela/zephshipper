@@ -48,7 +48,7 @@ python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py status 
 python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py submit <app_id>     # Submit for review
 ```
 
-Manage App Store Connect metadata, pricing, subscriptions, and submission via API.
+Manage App Store Connect metadata, pricing, subscriptions, submission, and ASO optimization via API.
 
 **Commands:**
 - `apps` — List all apps
@@ -62,6 +62,26 @@ Manage App Store Connect metadata, pricing, subscriptions, and submission via AP
 - `review-screenshot` — Upload paywall screenshot for subscription review
 - `status` — Full submission readiness check (version, build, screenshots, pricing, subs, review notes)
 - `submit` — Submit for App Store review (creates reviewSubmission + confirms)
+- `optimize` — Generate ASO-optimized metadata from code analysis (see below)
+
+#### optimize — ASO Metadata Generator
+
+```bash
+# Analyze code + current metadata, generate optimized keywords/subtitle/description/promo
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py optimize <app_id> ~/Projects/MyApp
+
+# Generate and upload directly
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py optimize <app_id> ~/Projects/MyApp --apply
+```
+
+Analyzes Swift source code to extract features, detect integrations (RevenueCat, HealthKit, CloudKit, etc.), and generates optimized metadata following ASO best practices:
+
+- **Subtitle** (30 chars): Benefit-focused, keywords not in title or keyword field
+- **Keywords** (100 chars): Deduplicated against title/subtitle, no plurals, no spaces after commas, category-aware
+- **Description** (4000 chars): Hook paragraph, feature bullets from actual code, "Perfect for" section, subscription terms if applicable, NO emoji, NO hallucinated contact info
+- **Promo Text** (170 chars): Clear value prop + CTA
+
+Outputs a before/after comparison and saves to `/tmp/<app-name>-aso-metadata.json`. All metadata passes through guardrails before upload.
 
 **Requires:** `~/.appstoreconnect/private_keys/AuthKey_*.p8` + PyJWT (`pip3 install pyjwt[crypto]`) + requests
 
@@ -101,7 +121,12 @@ For automated App Store screenshots, create a `ScreenshotTests.swift` in the UIT
 ~/.openclaw/workspace/skills/zephshipper/scripts/ship.sh ~/Projects/App "Bug fixes"
 ```
 
-Full pipeline: validate → bump version → archive → upload → submit for review.
+Full pipeline: validate → bump version → archive → upload → metadata check → ASO optimize → submit for review.
+
+Add `--optimize-aso` to automatically generate and apply ASO-optimized metadata during shipping:
+```bash
+~/.openclaw/workspace/skills/zephshipper/scripts/ship.sh ~/Projects/App --optimize-aso
+```
 
 **Requirements:**
 - App Store Connect API key at `~/.appstoreconnect/private_keys/AuthKey_*.p8`
