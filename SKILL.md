@@ -17,6 +17,16 @@ One command to validate, ship, and screenshot iOS/macOS apps.
 
 Validates app is ready to ship: build, SwiftLint, memory leak patterns.
 
+### bump-build <path> [increment]
+
+```bash
+~/.openclaw/workspace/skills/zephshipper/scripts/bump-build.sh ~/Projects/App
+~/.openclaw/workspace/skills/zephshipper/scripts/bump-build.sh ~/Projects/App 1      # +1 (default)
+~/.openclaw/workspace/skills/zephshipper/scripts/bump-build.sh ~/Projects/App set:5  # set to 5
+```
+
+Increments CURRENT_PROJECT_VERSION in Xcode project. Use before uploading new builds.
+
 ### ship <path> [release_notes]
 
 ```bash
