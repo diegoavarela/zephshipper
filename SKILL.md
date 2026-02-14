@@ -27,6 +27,21 @@ Validates app is ready to ship: build, SwiftLint, memory leak patterns.
 
 Increments CURRENT_PROJECT_VERSION in Xcode project. Use before uploading new builds.
 
+### asc-metadata
+
+```bash
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py apps
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py get <app_id>
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py set <app_id> metadata.json
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py subtitle <app_id> "text"
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py categories <app_id> PRIMARY [SECONDARY]
+```
+
+Manage App Store Connect metadata via API. Upload descriptions, keywords, subtitles, categories.
+Metadata JSON supports: description, keywords, promotionalText, whatsNew, subtitle, primaryCategory, secondaryCategory.
+
+**Requires:** `~/.appstoreconnect/private_keys/AuthKey_*.p8` + PyJWT (`pip3 install pyjwt[crypto]`)
+
 ### ship <path> [release_notes]
 
 ```bash
