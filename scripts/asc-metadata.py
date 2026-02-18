@@ -506,8 +506,97 @@ def cmd_subs(app_id):
                 print(f"    Review screenshot: {'✅' if has_ss else '❌ Missing'}")
 
 
+def _pre_submit_checks(app_id) -> bool:
+    """Run pre-submission validation. Returns True if safe to submit."""
+    print("=== PRE-SUBMISSION CHECKS ===\n")
+    blockers = []
+
+    # Get latest version
+    versions = api("GET", f"/apps/{app_id}/appStoreVersions?limit=1&fields[appStoreVersions]=versionString,appStoreState")
+    if not versions or not versions["data"]:
+        print("❌ No version found")
+        return False
+    ver_id = versions["data"][0]["id"]
+
+    # Check URLs are alive
+    locs = api("GET", f"/appStoreVersions/{ver_id}/appStoreVersionLocalizations")
+    if locs:
+        for loc in locs["data"]:
+            attrs = loc["attributes"]
+            for url_field in ["supportUrl", "marketingUrl"]:
+                url = attrs.get(url_field)
+                if url:
+                    try:
+                        resp = _requests.head(url, timeout=10, allow_redirects=True)
+                        if resp.status_code >= 400:
+                            blockers.append(f"❌ {url_field} returns HTTP {resp.status_code}: {url}")
+                        else:
+                            print(f"✅ {url_field}: {url}")
+                    except Exception as e:
+                        blockers.append(f"❌ {url_field} unreachable: {url} ({e})")
+
+    # Check Apple trademarks in subtitle
+    infos = api("GET", f"/apps/{app_id}/appInfos")
+    if infos:
+        for info in infos["data"]:
+            state = info["attributes"].get("appStoreState", "")
+            if state in ("READY_FOR_SALE", "ACCEPTED"):
+                continue  # skip old versions
+            info_locs = api("GET", f"/appInfos/{info['id']}/appInfoLocalizations")
+            if info_locs:
+                for iloc in info_locs["data"]:
+                    sub = iloc["attributes"].get("subtitle") or ""
+                    if sub:
+                        sub_lower = sub.lower()
+                        for tm in APPLE_TRADEMARKS:
+                            if re.search(r'\b' + re.escape(tm) + r'\b', sub_lower):
+                                blockers.append(f"❌ Subtitle \"{sub}\" contains Apple trademark \"{tm}\" (Guideline 5.2.5)")
+
+    # Check build is linked
+    build = api("GET", f"/appStoreVersions/{ver_id}/build?fields[builds]=version,processingState")
+    if not build or not build.get("data"):
+        blockers.append("❌ No build linked to version")
+    else:
+        state = build["data"]["attributes"]["processingState"]
+        if state != "VALID":
+            blockers.append(f"❌ Build state: {state} (needs VALID)")
+        else:
+            print(f"✅ Build: {build['data']['attributes']['version']} (VALID)")
+
+    # Check screenshots exist
+    if locs:
+        for loc in locs["data"]:
+            locale = loc["attributes"]["locale"]
+            ss = api("GET", f"/appStoreVersionLocalizations/{loc['id']}/appScreenshotSets")
+            count = 0
+            if ss:
+                for s in ss["data"]:
+                    shots = api("GET", f"/appScreenshotSets/{s['id']}/appScreenshots")
+                    if shots:
+                        count += len(shots["data"])
+            if count < 1:
+                blockers.append(f"❌ No screenshots for {locale}")
+            else:
+                print(f"✅ Screenshots ({locale}): {count}")
+
+    print()
+    if blockers:
+        print("🛑 SUBMISSION BLOCKED:\n")
+        for b in blockers:
+            print(f"  {b}")
+        print("\nFix these issues before submitting.")
+        return False
+
+    print("✅ All pre-submission checks passed.\n")
+    return True
+
+
 def cmd_submit(app_id):
     """Submit app for App Store review."""
+    # Run pre-submission checks
+    if not _pre_submit_checks(app_id):
+        return
+
     # Create review submission
     r = _rapi("POST", "/reviewSubmissions", {
         "data": {
