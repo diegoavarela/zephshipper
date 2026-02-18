@@ -275,6 +275,13 @@ SAFE_PATTERNS = [
     r'https?://www\.apple\.com/legal/',  # Apple EULA
 ]
 
+# Apple trademarks that CANNOT appear in app name/subtitle (Guideline 5.2.5)
+APPLE_TRADEMARKS = [
+    "mac", "iphone", "ipad", "apple", "ios", "macos", "ipod", "watchos",
+    "tvos", "visionos", "apple watch", "apple tv", "app store", "siri",
+    "icloud", "airpods", "airplay", "carplay", "imac", "macbook",
+]
+
 def validate_metadata(meta: dict) -> list:
     """Check metadata for potentially hallucinated content. Returns list of warnings."""
     warnings = []
@@ -305,6 +312,15 @@ def validate_metadata(meta: dict) -> list:
         text = meta.get(field, "")
         if text and len(text) > limit:
             warnings.append(f"❌ [{field}] exceeds {limit} char limit ({len(text)} chars)")
+
+    # Apple trademark check in subtitle (Guideline 5.2.5)
+    subtitle = meta.get("subtitle", "")
+    if subtitle:
+        subtitle_lower = subtitle.lower()
+        for tm in APPLE_TRADEMARKS:
+            # Match whole word or as part of compound (e.g. "for Mac", "iPhone app")
+            if re.search(r'\b' + re.escape(tm) + r'\b', subtitle_lower):
+                warnings.append(f"❌ [subtitle] contains Apple trademark \"{tm}\" — violates Guideline 5.2.5. Remove it.")
 
     # Keywords validation
     kw = meta.get("keywords", "")
@@ -611,6 +627,37 @@ def cmd_status(app_id):
                     a = s["attributes"]
                     icon = "✅" if a["state"] == "READY_TO_SUBMIT" else "⚠️"
                     print(f"Sub {a['name']}: {a['state']} {icon}")
+
+    # URL liveness check
+    print()
+    if locs:
+        for loc in locs["data"]:
+            attrs = loc["attributes"]
+            for url_field in ["supportUrl", "marketingUrl"]:
+                url = attrs.get(url_field)
+                if url:
+                    try:
+                        resp = _requests.head(url, timeout=10, allow_redirects=True)
+                        if resp.status_code < 400:
+                            print(f"{url_field}: {url} ✅")
+                        else:
+                            print(f"{url_field}: {url} ❌ HTTP {resp.status_code}")
+                    except Exception as e:
+                        print(f"{url_field}: {url} ❌ {e}")
+
+    # Apple trademark check on current subtitle
+    infos = api("GET", f"/apps/{app_id}/appInfos")
+    if infos:
+        for info in infos["data"]:
+            info_locs = api("GET", f"/appInfos/{info['id']}/appInfoLocalizations")
+            if info_locs:
+                for iloc in info_locs["data"]:
+                    sub = iloc["attributes"].get("subtitle") or ""
+                    if sub:
+                        sub_lower = sub.lower()
+                        for tm in APPLE_TRADEMARKS:
+                            if re.search(r'\b' + re.escape(tm) + r'\b', sub_lower):
+                                print(f"❌ Subtitle \"{sub}\" contains Apple trademark \"{tm}\" — violates Guideline 5.2.5")
 
     print("\n⚠️  App Privacy (Data Usage) must be set via ASC web UI — no API available.")
 
