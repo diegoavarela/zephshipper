@@ -27,42 +27,71 @@ Validates app is ready to ship: build, SwiftLint, memory leak patterns.
 
 Increments CURRENT_PROJECT_VERSION in Xcode project. Use before uploading new builds.
 
-### asc-metadata
+### asc-cli (powered by `asc` CLI)
 
 ```bash
-# Metadata
-python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py apps
-python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py get <app_id>
-python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py set <app_id> metadata.json
-python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py subtitle <app_id> "text"
-python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py categories <app_id> PRIMARY [SECONDARY]
+ASC=~/.openclaw/workspace/skills/zephshipper/scripts/asc-cli.sh
 
+# App & version info
+$ASC apps                           # List all apps
+$ASC versions <app-id>              # List versions with state
+$ASC builds <app-id> [limit]        # List builds
+$ASC status <app-id>                # Full status: versions + builds + URL checks
+$ASC get <app-id>                   # Get metadata (JSON)
+
+# Metadata (with guardrails)
+$ASC description <app-id> "text"    # Set description (4000 char limit)
+$ASC subtitle <app-id> "text"       # Set subtitle (30 char + trademark check)
+$ASC keywords <app-id> "text"       # Set keywords (100 char + auto-fix spaces)
+
+# TestFlight
+$ASC testflight groups <app-id>     # List beta groups
+$ASC testflight testers <app-id>    # List beta testers
+$ASC testflight builds <app-id>     # List TestFlight builds
+
+# Review & Release
+$ASC submit <app-id> [platform]     # Submit for review (IOS|MAC_OS)
+$ASC phased start <version-id>      # Start phased release
+$ASC phased pause <version-id>      # Pause phased release
+$ASC phased complete <version-id>   # Complete phased release
+$ASC reviews <app-id>               # Customer reviews
+
+# Screenshots
+$ASC screenshots list <app-id>      # List screenshots
+$ASC screenshots upload <app-id> file1.png file2.png
+
+# Raw passthrough to asc CLI
+$ASC raw apps list --output json
+$ASC raw testflight beta-groups list --app <id>
+```
+
+**Guardrails (enforced automatically):**
+- Apple trademark blocking in subtitles (iPhone, iPad, Mac, iOS, etc.)
+- Character limit enforcement (subtitle 30, keywords 100, description 4000)
+- Keyword space-after-comma auto-fix
+- URL liveness checks on status
+
+**Requires:** `asc` CLI (`brew tap rudrankriyam/tap && brew install asc`)
+
+### asc-metadata (legacy, still works)
+
+The Python-based `asc-metadata.py` still works for commands not yet migrated to asc-cli:
+
+```bash
 # Pricing & Subscriptions
 python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py price <app_id> free
 python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py subs <app_id>
 python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py review-screenshot <sub_id> /path/to/paywall.png
-
-# Review & Submission
-python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py review-notes <app_id> "notes" ['{"firstName":"...","lastName":"...","email":"...","phone":"..."}']
-python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py status <app_id>     # Full readiness check
-python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py submit <app_id>     # Submit for review
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/asc-metadata.py review-notes <app_id> "notes" [contact_json]
 ```
 
-Manage App Store Connect metadata, pricing, subscriptions, submission, and ASO optimization via API.
-
-**Commands:**
-- `apps` — List all apps
-- `get` — Get current metadata for an app
-- `set` — Upload metadata from JSON file (with guardrails)
-- `subtitle` — Set subtitle
-- `categories` — Set primary/secondary categories
-- `price free` — Set app price to Free
-- `subs` — List subscriptions with status and review screenshot check
-- `review-notes` — Set review notes + contact info (creates or updates)
-- `review-screenshot` — Upload paywall screenshot for subscription review
-- `status` — Full submission readiness check (version, build, screenshots, pricing, subs, review notes)
-- `submit` — Submit for App Store review (creates reviewSubmission + confirms)
-- `optimize` — Generate ASO-optimized metadata from code analysis (see below)
+**Commands (prefer asc-cli for these):**
+- `apps` → `asc-cli.sh apps`
+- `versions` → `asc-cli.sh versions`
+- `get` → `asc-cli.sh get`
+- `subtitle` → `asc-cli.sh subtitle`
+- `status` → `asc-cli.sh status`
+- `submit` → `asc-cli.sh submit`
 
 #### optimize — ASO Metadata Generator
 
