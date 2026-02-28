@@ -201,6 +201,40 @@ for v in data:
     asc reviews list --app "$APP_ID" --output table
     ;;
 
+  # --- In-App Purchases ---
+  iap)
+    SUBCMD="${1:?Usage: asc-cli.sh iap <list|get|submit|screenshots> <app-id|iap-id>}"
+    shift
+    case "$SUBCMD" in
+      list)
+        APP_ID="${1:?Missing app-id}"
+        asc iap list --app "$APP_ID" --output "${2:-table}"
+        ;;
+      get)
+        IAP_ID="${1:?Missing iap-id}"
+        asc iap get --id "$IAP_ID" --output json
+        ;;
+      submit)
+        IAP_ID="${1:?Missing iap-id}"
+        asc iap submit --iap-id "$IAP_ID" --confirm
+        echo "IAP submitted for review"
+        ;;
+      screenshots)
+        ACTION="${1:?Missing action (list|upload)}"
+        IAP_ID="${2:?Missing iap-id}"
+        case "$ACTION" in
+          list|get) asc iap review-screenshots get --iap-id "$IAP_ID" ;;
+          upload)
+            FILE="${3:?Missing file path}"
+            asc iap review-screenshots create --iap-id "$IAP_ID" --file "$FILE"
+            echo "IAP review screenshot uploaded"
+            ;;
+        esac
+        ;;
+      *) echo "Unknown iap subcommand: $SUBCMD (try: list|get|submit|screenshots)" ;;
+    esac
+    ;;
+
   # --- Raw passthrough to asc ---
   raw)
     asc "$@"

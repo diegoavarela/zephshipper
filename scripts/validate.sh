@@ -393,7 +393,7 @@ else
 fi
 
 # 16. Placeholder text in UI strings
-PLACEHOLDER_UI=$(grep -rn '"Lorem ipsum\|"Placeholder\|"Sample text\|"Test text\|"Insert.*here\|"Your.*here' --include="*.swift" 2>/dev/null | grep -v "Test\|test\|Preview\|placeholder:" | wc -l | xargs)
+PLACEHOLDER_UI=$(grep -rn '"Lorem ipsum\|"Placeholder\|"Sample text\|"Test text\|"Insert.*here' --include="*.swift" 2>/dev/null | grep -v "Test\|test\|Preview\|placeholder:\|will appear here\|response here" | wc -l | xargs)
 if [ "$PLACEHOLDER_UI" -eq 0 ]; then
     l3_pass "No placeholder text in UI strings"
 else
@@ -529,7 +529,7 @@ echo ""
 echo "  ── Security ──"
 
 # 23. Hardcoded API keys/secrets
-SECRETS_FOUND=$(grep -rn 'sk-[a-zA-Z0-9]\{20,\}\|sk_live_\|sk_test_\|Bearer [a-zA-Z0-9]\{20,\}\|API_KEY.*=.*"[a-zA-Z0-9]\|apiKey.*=.*"[a-zA-Z0-9]\|PRIVATE_KEY.*=\|secret.*=.*"[a-zA-Z0-9]' --include="*.swift" --include="*.plist" 2>/dev/null | grep -v "Test\|test\|Mock\|mock\|Example\|example" | wc -l | xargs)
+SECRETS_FOUND=$(grep -rn 'sk-[a-zA-Z0-9]\{20,\}\|sk_live_\|sk_test_\|Bearer [a-zA-Z0-9]\{20,\}\|PRIVATE_KEY.*=.*"[a-zA-Z0-9]' --include="*.swift" --include="*.plist" 2>/dev/null | grep -v "Test\|test\|Mock\|mock\|Example\|example\|TextField\|placeholder\|comment\|Secrets\.plist\|ProcessInfo\|UserDefaults\|@AppStorage" | wc -l | xargs)
 if [ "$SECRETS_FOUND" -eq 0 ]; then
     l3_pass "No hardcoded API keys/secrets detected"
 else

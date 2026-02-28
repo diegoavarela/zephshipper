@@ -18,8 +18,8 @@ TEAM_ID="LFAGCRNVLW"
 TEMP_DIR="/tmp/zephshipper"
 MAX_RETRIES=3
 
-STEPS=(detect validate bump archive upload metadata optimize submit)
-STEP_LABELS=("🔍 Detect Project" "✅ Validate" "🔢 Bump Build" "📦 Archive" "☁️  Upload" "📝 Metadata Check" "🔑 ASO Optimize" "🚀 Submit")
+STEPS=(detect validate iap bump archive upload metadata optimize submit)
+STEP_LABELS=("🔍 Detect Project" "✅ Validate" "💰 IAP Check" "🔢 Bump Build" "📦 Archive" "☁️  Upload" "📝 Metadata Check" "🔑 ASO Optimize" "🚀 Submit")
 
 # ── Parse Args ──────────────────────────────────────────────────────
 PROJECT_PATH=""
@@ -189,6 +189,127 @@ step_validate() {
         return 1
     }
     ok "Validation passed"
+    return 0
+}
+
+# ── Step 2.5: IAP Check ─────────────────────────────────────────────
+step_iap() {
+    log "${STEP_LABELS[2]}"
+
+    if [[ -z "$APP_ID" || "$APP_ID" == "DRY_RUN_APP_ID" ]]; then
+        if $DRY_RUN; then
+            info "[DRY-RUN] Would check IAPs"; return 0
+        fi
+        info "No ASC App ID yet — skipping IAP check (new app?)"
+        return 0
+    fi
+
+    if $DRY_RUN; then
+        info "[DRY-RUN] Would check IAPs for $APP_ID"; return 0
+    fi
+
+    # Check if app references IAP/subscription in code
+    local has_iap_code=false
+    if grep -rq "RevenueCat\|StoreKit\|Purchases\|Product\.\|\.purchase\|paywall\|PRO\|premium\|subscription" "$PROJECT_PATH" --include="*.swift" 2>/dev/null; then
+        has_iap_code=true
+    fi
+
+    if ! $has_iap_code; then
+        ok "No IAP/subscription references found in code — skipping"
+        return 0
+    fi
+
+    info "IAP/subscription references detected in code — checking ASC..."
+
+    # List IAPs for this app
+    local iap_json
+    iap_json=$(asc iap list --app "$APP_ID" --output json 2>/dev/null || echo "[]")
+
+    local iap_count
+    iap_count=$(echo "$iap_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo "0")
+
+    if [[ "$iap_count" == "0" ]]; then
+        # Also check subscriptions
+        local sub_json
+        sub_json=$(asc subscriptions list --app "$APP_ID" --output json 2>/dev/null || echo "[]")
+        local sub_count
+        sub_count=$(echo "$sub_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo "0")
+
+        if [[ "$sub_count" == "0" ]]; then
+            fail "Code references IAP/subscriptions but NONE found in App Store Connect!"
+            info "Create your IAPs/subscriptions in ASC before shipping."
+            info "Use: asc iap create --app $APP_ID --type <TYPE> --ref-name <NAME> --product-id <ID>"
+            return 1
+        fi
+    fi
+
+    ok "Found $iap_count IAP(s) in App Store Connect"
+
+    # Check each IAP has a review screenshot
+    local missing_screenshots=()
+    local iap_ids
+    iap_ids=$(echo "$iap_json" | python3 -c "
+import json,sys
+data=json.load(sys.stdin)
+for iap in (data if isinstance(data,list) else []):
+    iap_id = iap.get('id','')
+    name = iap.get('attributes',{}).get('referenceName','') or iap.get('attributes',{}).get('name','')
+    state = iap.get('attributes',{}).get('state','')
+    print(f'{iap_id}|{name}|{state}')
+" 2>/dev/null)
+
+    local needs_submit=()
+    while IFS='|' read -r iap_id iap_name iap_state; do
+        [[ -z "$iap_id" ]] && continue
+
+        # Check review screenshot
+        local screenshot
+        screenshot=$(asc iap review-screenshots get --iap-id "$iap_id" --output json 2>/dev/null || echo "{}")
+        local has_screenshot
+        has_screenshot=$(echo "$screenshot" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+# If it's a dict with 'id' or a non-empty list, screenshot exists
+if isinstance(d, list): print('yes' if len(d)>0 else 'no')
+elif isinstance(d, dict) and d.get('id'): print('yes')
+else: print('no')
+" 2>/dev/null || echo "no")
+
+        if [[ "$has_screenshot" == "no" ]]; then
+            missing_screenshots+=("$iap_name ($iap_id)")
+            warn "IAP '$iap_name' missing review screenshot!"
+        else
+            ok "IAP '$iap_name' has review screenshot"
+        fi
+
+        # Check if IAP needs to be submitted for review
+        if [[ "$iap_state" != "APPROVED" && "$iap_state" != "WAITING_FOR_REVIEW" ]]; then
+            needs_submit+=("$iap_id|$iap_name")
+        fi
+    done <<< "$iap_ids"
+
+    # Block if screenshots missing
+    if [[ ${#missing_screenshots[@]} -gt 0 ]]; then
+        fail "IAPs missing review screenshots: ${missing_screenshots[*]}"
+        info "Upload screenshots: asc iap review-screenshots create --iap-id <ID> --file ./screenshot.png"
+        info "Apple REQUIRES review screenshots for IAP submission."
+        return 1
+    fi
+
+    # Auto-submit IAPs that need review
+    if [[ ${#needs_submit[@]} -gt 0 ]]; then
+        for entry in "${needs_submit[@]}"; do
+            IFS='|' read -r iap_id iap_name <<< "$entry"
+            info "Submitting IAP '$iap_name' for review..."
+            if asc iap submit --iap-id "$iap_id" --confirm 2>&1; then
+                ok "IAP '$iap_name' submitted for review"
+            else
+                warn "Could not submit IAP '$iap_name' — may need manual action"
+            fi
+        done
+    fi
+
+    ok "IAP validation complete"
     return 0
 }
 
@@ -477,7 +598,7 @@ step_optimize() {
 
 # ── Step 8: Submit ──────────────────────────────────────────────────
 step_submit() {
-    log "${STEP_LABELS[6]}"
+    log "${STEP_LABELS[8]}"
 
     if [[ -z "$APP_ID" || "$APP_ID" == "DRY_RUN_APP_ID" ]]; then
         if $DRY_RUN; then

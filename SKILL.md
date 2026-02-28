@@ -56,6 +56,13 @@ $ASC phased pause <version-id>      # Pause phased release
 $ASC phased complete <version-id>   # Complete phased release
 $ASC reviews <app-id>               # Customer reviews
 
+# In-App Purchases
+$ASC iap list <app-id>              # List IAPs
+$ASC iap get <iap-id>               # Get IAP details
+$ASC iap submit <iap-id>            # Submit IAP for review
+$ASC iap screenshots list <iap-id>  # Check review screenshot
+$ASC iap screenshots upload <iap-id> file.png  # Upload review screenshot
+
 # Screenshots
 $ASC screenshots list <app-id>      # List screenshots
 $ASC screenshots upload <app-id> file1.png file2.png
