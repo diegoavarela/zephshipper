@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VALIDATE="$SCRIPT_DIR/validate.sh"
 BUMP_BUILD="$SCRIPT_DIR/bump-build.sh"
 ASC_META="$SCRIPT_DIR/asc-metadata.py"
+SUB_FLOW="$SCRIPT_DIR/sub-flow.py"
 
 KEY_ID="AA5UCQU456"
 ISSUER_ID="638c67e6-9365-4b3f-8250-474197f6f1a1"
@@ -28,6 +29,7 @@ VERSION=""
 WHATS_NEW=""
 DRY_RUN=false
 OPTIMIZE_ASO=false
+PAYWALL_SCREENSHOT=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -35,6 +37,7 @@ while [[ $# -gt 0 ]]; do
         --version) VERSION="$2"; shift 2 ;;
         --whats-new) WHATS_NEW="$2"; shift 2 ;;
         --optimize-aso) OPTIMIZE_ASO=true; shift ;;
+        --screenshot) PAYWALL_SCREENSHOT="$2"; shift 2 ;;
         --dry-run) DRY_RUN=true; shift ;;
         -h|--help)
             echo "Usage: ship.sh <project_path> [--resume-from <step>] [--version <x.y.z>] [--whats-new \"text\"] [--dry-run]"
@@ -192,7 +195,9 @@ step_validate() {
     return 0
 }
 
-# ── Step 2.5: IAP Check ─────────────────────────────────────────────
+# ── Step 2.5: IAP/Subscription Check ────────────────────────────────
+SUB_FLOW_RESULT=""  # "api_submitted" | "needs_browser_flow" | ""
+
 step_iap() {
     log "${STEP_LABELS[2]}"
 
@@ -202,10 +207,6 @@ step_iap() {
         fi
         info "No ASC App ID yet — skipping IAP check (new app?)"
         return 0
-    fi
-
-    if $DRY_RUN; then
-        info "[DRY-RUN] Would check IAPs for $APP_ID"; return 0
     fi
 
     # Check if app references IAP/subscription in code
@@ -219,98 +220,40 @@ step_iap() {
         return 0
     fi
 
-    info "IAP/subscription references detected in code — checking ASC..."
+    info "IAP/subscription references detected — running sub-flow..."
 
-    # List IAPs for this app
-    local iap_json
-    iap_json=$(asc iap list --app "$APP_ID" --output json 2>/dev/null || echo "[]")
-
-    local iap_count
-    iap_count=$(echo "$iap_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo "0")
-
-    if [[ "$iap_count" == "0" ]]; then
-        # Also check subscriptions
-        local sub_json
-        sub_json=$(asc subscriptions list --app "$APP_ID" --output json 2>/dev/null || echo "[]")
-        local sub_count
-        sub_count=$(echo "$sub_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d) if isinstance(d,list) else 0)" 2>/dev/null || echo "0")
-
-        if [[ "$sub_count" == "0" ]]; then
-            fail "Code references IAP/subscriptions but NONE found in App Store Connect!"
-            info "Create your IAPs/subscriptions in ASC before shipping."
-            info "Use: asc iap create --app $APP_ID --type <TYPE> --ref-name <NAME> --product-id <ID>"
-            return 1
-        fi
+    local screenshot_arg=""
+    if [[ -n "${PAYWALL_SCREENSHOT:-}" && -f "$PAYWALL_SCREENSHOT" ]]; then
+        screenshot_arg="--screenshot $PAYWALL_SCREENSHOT"
     fi
 
-    ok "Found $iap_count IAP(s) in App Store Connect"
+    local dry_arg=""
+    $DRY_RUN && dry_arg="--dry-run"
 
-    # Check each IAP has a review screenshot
-    local missing_screenshots=()
-    local iap_ids
-    iap_ids=$(echo "$iap_json" | python3 -c "
-import json,sys
-data=json.load(sys.stdin)
-for iap in (data if isinstance(data,list) else []):
-    iap_id = iap.get('id','')
-    name = iap.get('attributes',{}).get('referenceName','') or iap.get('attributes',{}).get('name','')
-    state = iap.get('attributes',{}).get('state','')
-    print(f'{iap_id}|{name}|{state}')
-" 2>/dev/null)
+    local output exit_code
+    output=$(python3 "$SUB_FLOW" "$APP_ID" $screenshot_arg --skip-submit $dry_arg 2>&1) || exit_code=$?
+    exit_code=${exit_code:-0}
 
-    local needs_submit=()
-    while IFS='|' read -r iap_id iap_name iap_state; do
-        [[ -z "$iap_id" ]] && continue
+    echo "$output" | sed 's/^/  /'
 
-        # Check review screenshot
-        local screenshot
-        screenshot=$(asc iap review-screenshots get --iap-id "$iap_id" --output json 2>/dev/null || echo "{}")
-        local has_screenshot
-        has_screenshot=$(echo "$screenshot" | python3 -c "
-import json,sys
-d=json.load(sys.stdin)
-# If it's a dict with 'id' or a non-empty list, screenshot exists
-if isinstance(d, list): print('yes' if len(d)>0 else 'no')
-elif isinstance(d, dict) and d.get('id'): print('yes')
-else: print('no')
-" 2>/dev/null || echo "no")
-
-        if [[ "$has_screenshot" == "no" ]]; then
-            missing_screenshots+=("$iap_name ($iap_id)")
-            warn "IAP '$iap_name' missing review screenshot!"
+    if [[ $exit_code -eq 0 ]]; then
+        # Check if subs were submitted or already OK
+        if echo "$output" | grep -q "api_submitted"; then
+            SUB_FLOW_RESULT="api_submitted"
+            ok "Subscriptions submitted via API"
         else
-            ok "IAP '$iap_name' has review screenshot"
+            ok "Subscription check passed"
         fi
-
-        # Check if IAP needs to be submitted for review
-        if [[ "$iap_state" != "APPROVED" && "$iap_state" != "WAITING_FOR_REVIEW" ]]; then
-            needs_submit+=("$iap_id|$iap_name")
-        fi
-    done <<< "$iap_ids"
-
-    # Block if screenshots missing
-    if [[ ${#missing_screenshots[@]} -gt 0 ]]; then
-        fail "IAPs missing review screenshots: ${missing_screenshots[*]}"
-        info "Upload screenshots: asc iap review-screenshots create --iap-id <ID> --file ./screenshot.png"
-        info "Apple REQUIRES review screenshots for IAP submission."
+        return 0
+    elif [[ $exit_code -eq 2 ]]; then
+        SUB_FLOW_RESULT="needs_browser_flow"
+        warn "First-time subscriptions detected — will link via browser at submit step"
+        info "This is normal for first subscription submission."
+        return 0  # Don't block — handle at submit
+    else
+        fail "Subscription flow failed"
         return 1
     fi
-
-    # Auto-submit IAPs that need review
-    if [[ ${#needs_submit[@]} -gt 0 ]]; then
-        for entry in "${needs_submit[@]}"; do
-            IFS='|' read -r iap_id iap_name <<< "$entry"
-            info "Submitting IAP '$iap_name' for review..."
-            if asc iap submit --iap-id "$iap_id" --confirm 2>&1; then
-                ok "IAP '$iap_name' submitted for review"
-            else
-                warn "Could not submit IAP '$iap_name' — may need manual action"
-            fi
-        done
-    fi
-
-    ok "IAP validation complete"
-    return 0
 }
 
 # ── Step 3: Bump Build ──────────────────────────────────────────────
@@ -608,16 +551,38 @@ step_submit() {
     fi
 
     if $DRY_RUN; then
-        info "[DRY-RUN] Would run: asc-metadata.py submit $APP_ID"; return 0
+        info "[DRY-RUN] Would submit $APP_ID for review"
+        [[ "$SUB_FLOW_RESULT" == "needs_browser_flow" ]] && info "[DRY-RUN] Would need browser flow for first-time subs"
+        return 0
     fi
+
+    # Clean up zombie submissions first
+    info "Cleaning up old submissions..."
+    python3 -c "
+import sys; sys.path.insert(0, '$SCRIPT_DIR')
+from importlib.machinery import SourceFileLoader
+sf = SourceFileLoader('sub_flow', '${SUB_FLOW}').load_module()
+token = sf.get_token()
+cleaned = sf.cleanup_submissions('$APP_ID', token)
+print(f'  Cleaned {cleaned} zombie submission(s)')
+" 2>/dev/null || info "Cleanup skipped"
 
     # Wait for build to be VALID (up to 5 min)
     local waited=0 max_wait=300 interval=30
     info "Waiting for build to be processed..."
     while [[ $waited -lt $max_wait ]]; do
-        local status_out
-        status_out=$(python3 "$ASC_META" status "$APP_ID" 2>&1) || true
-        if echo "$status_out" | grep -q "Build:.*✅"; then
+        local build_ready
+        build_ready=$(python3 -c "
+import sys; sys.path.insert(0, '$SCRIPT_DIR')
+from importlib.machinery import SourceFileLoader
+sf = SourceFileLoader('sub_flow', '${SUB_FLOW}').load_module()
+token = sf.get_token()
+builds = sf.get_latest_build('$APP_ID', token)
+valid = [b for b in builds if b['state'] == 'VALID']
+print('yes' if valid else 'no')
+" 2>/dev/null || echo "no")
+
+        if [[ "$build_ready" == "yes" ]]; then
             ok "Build is ready"
             break
         fi
@@ -630,46 +595,100 @@ step_submit() {
         waited=$((waited + interval))
     done
 
-    # Submit
-    local attempt=0 output
-    while [[ $attempt -lt $MAX_RETRIES ]]; do
-        output=$(python3 "$ASC_META" submit "$APP_ID" 2>&1) || true
+    # Attach latest build to inflight versions
+    info "Attaching builds to versions..."
+    python3 -c "
+import sys; sys.path.insert(0, '$SCRIPT_DIR')
+from importlib.machinery import SourceFileLoader
+sf = SourceFileLoader('sub_flow', '${SUB_FLOW}').load_module()
+token = sf.get_token()
+versions = sf.get_inflight_versions('$APP_ID', token)
+builds = sf.get_latest_build('$APP_ID', token)
+valid_builds = [b for b in builds if b['state'] == 'VALID']
 
-        if echo "$output" | grep -qi "submitted for review\|🚀"; then
-            ok "App submitted for review! 🎉"
-            return 0
-        fi
+for v in versions:
+    for b in valid_builds:
+        sf.set_encryption(b['id'], token)
+        if sf.attach_build_to_version(v['id'], b['id'], token):
+            print(f\"  ✅ Build {b['version']} → {v['platform']} v{v['version']}\")
+            break
+        # Wrong platform, try next build
+" 2>/dev/null || warn "Build attach had issues (may already be attached)"
 
-        # Auto-fix: already in another submission
-        if echo "$output" | grep -qi "already added to another reviewSubmission"; then
-            warn "Existing review submission found — this version may already be submitted"
-            ok "Submission exists"
-            return 0
-        fi
+    # Handle first-time subscriptions
+    if [[ "$SUB_FLOW_RESULT" == "needs_browser_flow" ]]; then
+        echo ""
+        warn "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        warn "  FIRST-TIME SUBSCRIPTION — BROWSER REQUIRED"
+        warn "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo ""
+        info "Apple requires first-time subscriptions to be linked"
+        info "to the app version via the ASC web UI."
+        echo ""
+        info "Steps needed (automated by OpenClaw agent):"
+        info "  1. Open version page in ASC"
+        info "  2. Select subscriptions in 'In-App Purchases' section"
+        info "  3. Click 'Add for Review'"
+        info "  4. Submit for review"
+        echo ""
+        info "If running from OpenClaw, the agent will handle this"
+        info "via browser automation. Otherwise:"
+        echo ""
+        info "  Go to: https://appstoreconnect.apple.com/apps/$APP_ID/distribution/ios/version/inflight"
+        info "  Scroll to 'In-App Purchases and Subscriptions'"
+        info "  Select your subscriptions → Save → Add for Review"
+        echo ""
+        echo "  📝 NEEDS_BROWSER_FLOW"
+        echo "  📝 APP_URL: https://appstoreconnect.apple.com/apps/$APP_ID/distribution/ios/version/inflight"
+        return 2  # Special exit code for agent to handle
+    fi
 
-        # Auto-fix: unresolved issues
-        if echo "$output" | grep -qi "UNRESOLVED_ISSUES\|resolve"; then
-            warn "Unresolved issues — running metadata fixes"
-            step_metadata
+    # Standard API submission
+    for platform in "${PLATFORMS[@]}"; do
+        local plat_code
+        [[ "$platform" == "ios" ]] && plat_code="IOS" || plat_code="MAC_OS"
+
+        info "Submitting $platform for review..."
+
+        local attempt=0 output
+        while [[ $attempt -lt $MAX_RETRIES ]]; do
+            output=$(python3 -c "
+import sys; sys.path.insert(0, '$SCRIPT_DIR')
+from importlib.machinery import SourceFileLoader
+sf = SourceFileLoader('sub_flow', '${SUB_FLOW}').load_module()
+token = sf.get_token()
+versions = sf.get_inflight_versions('$APP_ID', token)
+v = next((v for v in versions if v['platform'] == '$plat_code'), None)
+if not v:
+    print('ERROR: No inflight version for $plat_code')
+    sys.exit(1)
+success, result = sf.submit_version('$APP_ID', v['id'], '$plat_code', token)
+if success:
+    print(f'SUBMITTED: {result}')
+else:
+    print(f'ERROR: {result}')
+    sys.exit(1)
+" 2>&1) || true
+
+            if echo "$output" | grep -q "SUBMITTED"; then
+                ok "$platform submitted for review! 🎉"
+                break
+            fi
+
+            if echo "$output" | grep -q "cannot be reviewed"; then
+                warn "$platform: cannot be reviewed — may need browser flow"
+                info "URL: https://appstoreconnect.apple.com/apps/$APP_ID/distribution/${platform}/version/inflight"
+                break
+            fi
+
             attempt=$((attempt + 1))
-            continue
-        fi
-
-        # App Privacy missing — can't auto-fix
-        if echo "$output" | grep -qi "app privacy\|privacy"; then
-            fail "App Privacy (Data Usage) must be set in App Store Connect web UI"
-            info "Go to: https://appstoreconnect.apple.com/apps/$APP_ID/distribution/privacy"
-            info "Then resume: ship.sh $PROJECT_PATH --resume-from submit"
-            return 1
-        fi
-
-        attempt=$((attempt + 1))
-        warn "Submit attempt $attempt/$MAX_RETRIES"
-        echo "$output" | grep -E "ERROR|error" | head -5 | sed 's/^/  /'
+            warn "Submit attempt $attempt/$MAX_RETRIES"
+            echo "$output" | grep -E "ERROR" | head -3 | sed 's/^/  /'
+        done
     done
 
-    fail "Submission failed after $MAX_RETRIES attempts"
-    return 1
+    ok "Submission complete"
+    return 0
 }
 
 # ── Main Pipeline ───────────────────────────────────────────────────

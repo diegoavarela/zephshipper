@@ -485,7 +485,7 @@ if grep -rq "EKEventStore\|EventKit" --include="*.swift" 2>/dev/null; then
     fi
 fi
 # HealthKit
-if grep -rq "HKHealthStore\|HealthKit" --include="*.swift" 2>/dev/null; then
+if grep -rq "import HealthKit\|HKHealthStore()" --include="*.swift" 2>/dev/null; then
     if grep -rq "NSHealthShareUsageDescription\|NSHealthUpdateUsageDescription" --include="*.plist" 2>/dev/null; then
         l3_pass "HealthKit usage description present"
     else

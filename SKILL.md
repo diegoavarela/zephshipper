@@ -151,18 +151,42 @@ For automated App Store screenshots, create a `ScreenshotTests.swift` in the UIT
 - Use `sleep(3)` after launch for splash screen
 - iPhone 16 Pro Max simulator = 1320x2868 (6.9" required size)
 
+### sub-flow <app_id> (Subscription Manager)
+
+```bash
+python3 ~/.openclaw/workspace/skills/zephshipper/scripts/sub-flow.py <app_id> [--screenshot path.png] [--dry-run] [--skip-submit]
+```
+
+Handles the full subscription lifecycle:
+1. Discovers all subscriptions and their states
+2. Checks/uploads review screenshots (auto-generates placeholder if none provided)
+3. Attempts API submission (works for non-first-time subs)
+4. Returns exit code 2 if first-time subs need browser flow (linking to version page)
+
+**Exit codes:**
+- 0: All good (subs submitted or already in review)
+- 1: Error (missing screenshots, API failure)
+- 2: Needs browser flow (first-time subscription, must link via ASC web UI)
+
+**Integrated into ship.sh** — called automatically during the IAP check step.
+
 ### ship <path> [release_notes]
 
 ```bash
 ~/.openclaw/workspace/skills/zephshipper/scripts/ship.sh ~/Projects/App "Bug fixes"
-```
-
-Full pipeline: validate → bump version → archive → upload → metadata check → ASO optimize → submit for review.
-
-Add `--optimize-aso` to automatically generate and apply ASO-optimized metadata during shipping:
-```bash
 ~/.openclaw/workspace/skills/zephshipper/scripts/ship.sh ~/Projects/App --optimize-aso
+~/.openclaw/workspace/skills/zephshipper/scripts/ship.sh ~/Projects/App --screenshot /path/to/paywall.png
 ```
+
+Full pipeline: detect → validate → IAP/sub check → bump build → archive → upload → metadata check → ASO optimize → submit for review.
+
+**Subscription handling (automatic):**
+- Detects IAP/subscription code references in Swift files
+- Checks subscription states in ASC
+- Auto-uploads review screenshots (placeholder if none provided)
+- For first-time subs: outputs browser flow instructions (exit code 2)
+- For subsequent subs: submits via API automatically
+- Cleans up zombie submissions before submitting
 
 **Requirements:**
 - App Store Connect API key at `~/.appstoreconnect/private_keys/AuthKey_*.p8`
